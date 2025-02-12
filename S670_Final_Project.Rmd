@@ -1,0 +1,1329 @@
+---
+title: "STAT-S 670: Exploratory Data Analysis"
+author: "Swarn Gaba | Gayatri Gattani | Gandhar Ravindra Pansare | Rishikesh Kakde"
+subtitle: "Final-Project: CUSTOMER SEGMENTATION ANALYSIS"
+date: "2024-04-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(scales)
+library(GGally)
+library(mgcv)
+library(metR)
+library(FactoMineR)
+library(factoextra)
+library(caret)
+library(reshape2)
+
+cb_palette = c("#56B4E9", "#E69F00", "#0072B2", "#009E73",
+               "#CC79A7", "#999999", "#D55E00", "#F0E442")
+
+```
+
+**Abstract**
+
+This project investigates the spending behaviors of customers relative to their income, age, and marital status using the Customer Personality Dataset from Kaggle. Through a detailed exploratory analysis, we identified significant patterns in spending relative to demographic factors and interaction with marketing efforts. We employed various statistical and machine learning techniques, including Principal Component Analysis (PCA), Generalized Additive Models (GAM), and multiple regression models, to uncover the nuanced relationships between customer demographics and their spending behaviors. Our findings suggest that age and income are significant predictors of spending, with variances in spending behaviors observable across different marital statuses. These insights can assist businesses in tailoring their marketing strategies to better align with the financial capabilities and preferences of distinct customer segments. The methodologies and results detailed in this report not only contribute to academic knowledge but also offer practical strategies for effective customer segmentation and targeted marketing.
+
+**Objective**
+
+Understanding customer spending relative to income and demographic variables like age and marital status helps businesses tailor their marketing strategies more effectively. This segmentation leads to targeted advertising, product placement, and pricing strategies that align better with customer needs and financial capabilities.
+
+**Research Questions**
+
+**1. Spending vs. Income Categorized by Age**
+
+How does spending behavior vary across different age groups with varying household incomes? Is there a linear relationship between spending and income for each age group, or is a more complex model required to understand the nuances? Are there unique spending behaviors specific to certain age groups? If so, what are these behaviors and what could be driving them?
+
+**2. Spending vs. Income Categorized by Marital Status**
+
+How does marital status influence spending relative to income? Is the spending-income relationship for different marital statuses best explained by a straightforward linear model, or does it require a more complex model to capture nuances? Are there identifiable patterns in spending behaviors among different marital statuses, and what might explain any variations?
+
+**3. Customer Segmentation**
+
+What distinct segments of customers can be identified based on their purchasing behaviors, demographics, and interactions with marketing campaigns? What unique characteristics define each identified customer segment?
+
+**Dataset Description**
+
+"Customer Personality Dataset” on Kaggle is provided by Dr. Omer Romero-Hernandez. This dataset has 29 variables where 25 are quantitative and it has 2240 observations. The dataset includes a survey of customers of a business, where the purchase and spending information is represented in US dollars. This dataset serves as a valuable resource for understanding and targeting diverse customer groups based on their characteristics and behaviors.
+
+**Key Variables Taken Into Consideration For Analysis**
+
+**Age:** Customer's Age (Years)
+
+**Income:** Customer's Yearly Household Income (US dollars)
+
+**Marital Status:** Customer's Relationship Status (Single, Widow, Divorced, Couple)
+
+**Amount Spent:** Amount Spent by the Customer on Different Products (Fruits, Wines, Meat, Fish, Sweets, Gold) (US dollars)
+
+**Customer's Channels of Purchase:**  Web, Store, Deals and Catalog
+
+**Reading the data from the file marketing_campaign.csv -**
+
+```{r}
+
+customer.data <- read.csv(file = "marketing_campaign.csv", header = TRUE, sep ='\t')
+
+```
+
+Having collated detailed customer information across a spectrum of behavioral and demographic variables, we conducted a preliminary analysis to understand the distribution and central tendencies of the variables. The ensuing summary encapsulates vital descriptive statistics, offering insight into the variability and central tendencies of customer attributes pertinent to our analysis.
+
+```{r}
+
+#view(customer.data)
+summary(customer.data)
+
+```
+
+As indicated by the summary, there are 24 NA entries in the Income column.To ensure the integrity of our analysis and the accuracy of subsequent results, we proceed to cleanse the dataset by omitting any observations with missing values.
+
+```{r}
+
+customer.data <- na.omit(customer.data)
+
+```
+
+To enhance the clarity and readability of our dataset, we'll proceed to rename the variables, aligning them more closely with the products and channels they represent.
+
+```{r}
+
+customer.data <- customer.data |>
+                 rename(
+                          Wines = MntWines,
+                          Fruits = MntFruits,
+                          Meat = MntMeatProducts,
+                          Fish = MntFishProducts,
+                          Sweets = MntSweetProducts,
+                          Gold = MntGoldProds,
+                          WebVisits = NumWebVisitsMonth,
+                          Web = NumWebPurchases,
+                          Deal = NumDealsPurchases,
+                          Catalog = NumCatalogPurchases,
+                          Store = NumStorePurchases
+    
+                      )
+
+```
+
+Prior to delving into deeper analysis, we refined the dataset by transforming and summarizing key variables, which will allow for a more nuanced understanding of customer demographics and purchasing patterns.
+
+```{r}
+
+# Calculate age of the customers by subtracting the year of birth from 2014.
+
+customer.data$Age <- 2014 - customer.data$Year_Birth
+
+# Convert 'Dt_Customer' from character to date format and calculate the tenure in days
+# from the most recent customer date.
+
+customer.data$Dt_Customer <- as.Date(customer.data$Dt_Customer, format= "%d-%m-%Y")
+days <- as.numeric(max(customer.data$Dt_Customer) - customer.data$Dt_Customer)
+customer.data$Tenure <- days
+customer.data$Tenure <- as.numeric(customer.data$Tenure, errors="coerce")
+
+# Recategorize 'Marital_Status' into a new variable 'RelationshipStatus' 
+# with simplified categories.
+
+customer.data$RelationshipStatus <- ifelse(customer.data$Marital_Status == "Married" |
+        customer.data$Marital_Status == "Together", "Couple",
+        ifelse(customer.data$Marital_Status %in% c("Absurd", "YOLO", "Single","Alone"),
+               "Single",
+        ifelse(customer.data$Marital_Status %in% c("Widow"), "Widow", 
+        ifelse(customer.data$Marital_Status %in% c("Divorced"), "Divorced", ""))))
+
+# Convert the 'RelationshipStatus' into a numeric variable 'RelStatus' for easier analysis.
+
+customer.data$RelStatus <- as.numeric(ifelse(customer.data$RelationshipStatus == "Widow", 1,
+                           ifelse(customer.data$RelationshipStatus == "Divorced", 2,
+                           ifelse(customer.data$RelationshipStatus == "Single", 3,
+                           ifelse(customer.data$RelationshipStatus == "Couple", 4, 0)))))
+
+# Recategorize 'Education' into simplified groups.
+
+customer.data$Education <- ifelse(customer.data$Education %in% c("Basic", "2n Cycle"),
+                                  "Undergraduate", 
+                           ifelse(customer.data$Education == "Graduation", "Graduate",
+                           ifelse(customer.data$Education %in% c("Master", "PhD"),
+                                  "Postgraduate", "")))
+
+# Convert the 'Education' into a numeric variable 'LevEd' for easier analysis.
+
+customer.data$LevEd <- as.numeric(ifelse(customer.data$Education == "Undergraduate", 1,
+                       ifelse(customer.data$Education == "Graduate", 2,
+                       ifelse(customer.data$Education == "Postgraduate", 3, 0))))
+
+
+# Sum all purchase channels to create a 'Purchases' variable representing 
+# total number of purchases.
+
+customer.data$Purchases <- customer.data$Deal + customer.data$Web + 
+                           customer.data$Catalog + customer.data$Store
+
+# Calculate the total amount spent by the customer on all product categories.
+
+customer.data$Total_Amount_Spent <- customer.data$Wines + customer.data$Fruits +
+                                    customer.data$Meat + customer.data$Fish +
+                                    customer.data$Sweets + customer.data$Gold
+
+```
+
+To focus our analysis on a demographically relevant customer base and exclude outliers, we apply filters to the age and income variables, limiting the age to 75 years and income to the range of $10,000 to $100,000.
+
+```{r}
+
+customer.data <- dplyr::filter(customer.data, Age <= 75 & Income <= 100000 & Income >= 10000)
+  
+```
+
+**Age Distribution of Customers**
+
+```{r}
+
+ggplot(customer.data, aes(x = Age)) +
+  geom_histogram() +
+  labs(title = "Figure 1: Age Distribution of Customers",
+       subtitle = "Depicted By Histogram\n",
+       x = "\nAge (Years)",
+       y = "Frequency\n")
+
+```
+
+The histogram illustrates the age distribution within our customer database, with the most significant density centering around the 40-year mark, suggesting that our primary customer segment falls within the middle-aged demographic, particularly those between 30 to 50 years of age. The representation decreases for the younger (<25 years) and older (>60 years) populations. This pattern emphasizes the potential for tailoring marketing strategies to the predominant age groups, enhancing engagement and possibly boosting transactions with targeted offerings.
+
+**Income Distribution of Customers**
+
+```{r}
+
+ggplot(customer.data, aes(x = Income)) +
+  geom_histogram() +
+  labs(title = "Figure 2: Income Distribution of Customers",
+       subtitle = "Depicted By Histogram\n",
+       x = "\nIncome (USD)",
+       y = "Frequency\n")
+
+```
+
+This histogram provides a visual representation of our customers' income levels, exhibiting a bimodal distribution with prominent peaks around the $37,000 and $62,000 marks. This pattern highlights a customer base primarily concentrated in these middle-income brackets. The steep decline post the second peak reflects a significant drop in customers within higher income tiers, particularly above $75,000. The long right tail of the distribution suggests a smaller yet notable segment of customers with higher incomes. Recognizing these income segments is vital for crafting marketing strategies and pricing models that cater effectively to the predominant income groups in our customer base.
+
+**Distribution of Customers Based on Their Marital Status**
+
+```{r}
+
+customer.data.pie <- customer.data |>
+                     group_by(RelationshipStatus) |>
+                     summarise(Count = n()) |>
+                     mutate(Percentage = Count / sum(Count) * 100)
+
+ggplot(customer.data.pie, aes(x = "", y = Count, fill = RelationshipStatus)) + 
+  geom_bar(width = 1, stat = "identity", color = "black") +
+  coord_polar(theta = "y") + 
+  theme_void() +
+  scale_fill_manual(values = cb_palette) +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(title = "Figure 3: Distribution of Customers Based on Their Marital Status",
+       subtitle = "Depicted By Pie Chart",
+       fill = "Marital Status") 
+
+```
+
+The pie chart delineates our customer base's marital status composition, with the largest segment, 64.7%, represented in light blue, encompassing individuals in a partnership or marriage i.e.Couple. Singles, visualized in dark blue, make up the second-largest group at 21.4%, indicating a significant single customer demographic. Those who are divorced, shown in orange, form a notable 10.4% of the customer base, while widows, indicated in green, comprise the smallest proportion at 3.5%. This distribution is key for tailoring marketing strategies to effectively address the different lifestyle needs and preferences associated with each marital status group.
+
+To facilitate a targeted analysis of our customer demographics and spending habits, we segmented the data into distinct age and income groups, then reshaped the dataset to compare spending across different product categories.
+
+```{r}
+
+# Categorize customers into age groups for further analysis.
+customer.data <- customer.data |> 
+                 mutate(age_group = cut(as.numeric(Age), 
+                        breaks = c(0, 35, 45, 55, 65, 75),
+                        labels = c("35 and Below", "36-45", "46-55", "56-65", "66-75")))
+
+# Segment customers based on their income into defined groups.
+customer.data <- customer.data |>
+                 mutate(income_group = cut(as.numeric(Income), 
+                        breaks = c(0, 20000, 40000, 60000, 80000, 100000),
+                        labels = c("20000 and Below", "20000-40000", 
+                                   "40000-60000", "60000-80000", "80000-100000")))
+
+# Reshape data to a long format for easier analysis of spending on different products.
+customer.data.spending <- customer.data |>
+                          pivot_longer(cols = Wines:Gold, names_to = "Product",
+                          values_to = "Amount_Spent")
+
+```
+
+**Average Amount Spent on Different Product, Based on Customer's Age**
+
+```{r}
+
+# Aggregate the average amount spent on each product by age group.
+
+age_aggregation <- aggregate(Amount_Spent ~ Product + age_group, 
+                             data = customer.data.spending, mean)
+
+# Generate a bar chart to visualize the average amount spent on different products
+# by customer age groups.
+
+age_aggregation |>
+ggplot(aes(x = age_group, y = Amount_Spent, fill = Product)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = cb_palette) +
+  theme_bw() +
+  labs(title="Figure 4: Average Amount Spent on Different Products",
+       subtitle = "Based on Customer's Age, Depicted By Bar Chart\n", 
+       hjust = 0, 
+       x = "\nCustomer's Age (Years)", 
+       y = "Average Amount Spent (USD)\n")
+  
+```
+
+The chart shows the average amount spent in USD on six different products, categorized by the age groups of the customers.
+
+**Key Observations:**
+
+The youngest age group, **35 and Below**, spends the least on average, with very low expenditures on gold and wines. Whereas the **66-75** age group is the highest spender, with notably high expenditure on wines.
+
+The **46-55** age group spends the most on average across all products, particularly on gold, which shows a significant spike compared to other age groups.
+
+For the **56-65** age group, meat and wines appear to be the most purchased products.
+
+Spending on Wine emerges as the top choice and Meat is a second most choice across all demographics.Spending on fruits is relatively consistent across all age groups but is not the highest expenditure in any category. Sweets have the least variation in spending across different age groups.
+
+This bar chart is useful for understanding consumer spending habits across different age brackets and could be used by marketers to tailor their strategies according to customer demographics.
+
+**Average Amount Spent on Different Product, Based on Customer's Marital Status**
+
+```{r}
+
+# Calculate the average amount spent on each product, grouped by the customers' marital status.
+
+relation_aggregation <- aggregate(Amount_Spent ~ Product + RelationshipStatus, 
+                                  data = customer.data.spending, mean)
+
+# Plot a bar chart to visualize how the average spending on products 
+# varies with customers' marital status.
+
+relation_aggregation |>
+ggplot( aes(x = RelationshipStatus, y = Amount_Spent, fill = Product)) +
+  geom_bar(stat = "identity", position = "dodge")  +
+  scale_fill_manual(values = cb_palette) +
+  theme_bw() +
+  labs(title="Figure 5: Average Amount Spent on Different Products",
+       subtitle = "Based on Customer's Marital Status, Depicted By Bar Chart\n", 
+       hjust = 0, 
+       x = "\nCustomer's Marital Status", 
+       y = "Average Amount Spent (USD)\n")
+
+```
+
+This chart illustrates the average amount of money in USD spent on various products, segmented by the marital status of the customers.
+
+**Observations from the chart include:**
+
+Customers who are **widowed** spend the most on average, particularly on wines and gold, which is significantly higher than any other category.
+
+**Divorced** customers have the second-highest spending on gold and also show substantial spending on wines.
+
+**Couples** and **single** customers spend less on average compared to divorced and widowed customers.
+
+Spending on fish, fruits, and sweets appears relatively moderate across all marital statuses.
+
+**Single** customers have the lowest average spending in most categories, especially on gold and wines.
+
+The expenditure pattern for meat is quite uniform across all groups, with singles spending slightly more than others. Additionally, wines are particularly popular, dominating expenditures across all groups.
+
+The chart can provide valuable insights for businesses seeking to understand spending patterns based on marital status, allowing them to tailor their products and marketing strategies to different customer segments.
+
+**Percentage of Channel Usage for Purchases, Based on Customer's Marital Status**
+
+```{r, warning = FALSE}
+
+# Transform purchase channels into a long format and calculate the average purchases 
+# by channel and marital status.
+
+customer.data.RelationshipStatus <- customer.data.spending |>
+  pivot_longer(cols = c(Deal, Web, Catalog, Store), names_to = "Channel", 
+               values_to = "Purchase") |>
+  group_by(RelationshipStatus, Channel) |>
+  summarise(AvgPurchases = mean(Purchase, na.rm = TRUE), .groups = 'drop')
+
+# Calculate the percentage of each channel's purchases relative to the total purchases 
+# for each marital status.
+
+customer.data.Percentage <- customer.data.RelationshipStatus |>
+  group_by(RelationshipStatus) |>
+  mutate(TotalPurchases = sum(AvgPurchases)) |>
+  ungroup() |>
+  mutate(Percentage = AvgPurchases / TotalPurchases * 100)
+
+# Plot a stacked bar chart to visualize the percentage distribution of purchase channels 
+# by marital status.
+
+ggplot(customer.data.Percentage, aes(x = RelationshipStatus, y = Percentage, fill = Channel)) +
+  geom_col(position = "fill", color = "black", width = 0.65, size = 0.3) + 
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = cb_palette) +
+  theme_classic() +
+  geom_text(aes(label = paste(round(Percentage, 2), "%")), 
+            position = position_fill(vjust = 0.5), size = 3, color = "black") +
+  labs(title="Figure 6: Percentage of Channel Usage for Purchases",
+       subtitle = "Based on Customer's Marital Status, Depicted By Stacked Bar Chart\n", 
+       hjust = 0, 
+       x = "\nCustomer's Marital Status", 
+       y = "Percentage (%)\n")  
+
+```
+
+The chart shows the distribution of purchase channels used by customers, segmented by their marital status. Each stacked bar represents 100% of the purchases made by a specific marital status group, divided into four channels: Catalog, Deal, Store and Web.
+
+**Key observations from the chart:**
+
+The **Store** channel has the highest percentage usage across all marital statuses, with Single customers using it for 40.02% of purchases, which is the highest among all groups.
+
+**Web** purchases are the most preferred by Divorced customers, accounting for 28.49% of their purchases.
+
+**Catalog** purchases have a fairly even distribution across all marital statuses, ranging from 17.43% to 19.86%.
+
+**Deal** purchases are the least used channel for all marital statuses, with slightly higher usage by Divorced customers at 15.69%.
+
+This visual representation could be used by retailers and marketers to understand and strategize channel engagement based on the marital status of their customers, ensuring they target their audience effectively through the most used channels.
+
+**Research Question 1**
+
+How does spending behavior vary across different age groups with varying household incomes?
+
+Is there a linear relationship between spending and income for each age group, or is a more complex model required to understand the nuances?
+
+Are there unique spending behaviors specific to certain age groups? If so, what are these behaviors and what could be driving them?
+
+**Spending vs. Income Categorized by Age:** 
+
+Let's employ the ggpairs function to examine plots and correlations for each variable.
+
+```{r}
+
+ggpairs(customer.data[,c("Age","Income","Total_Amount_Spent")])
+
+```
+
+This ggpairs provides a multi-dimensional view of the relationships between age, income, and total amount spent by our customers. The correlation between age and income is relatively low at 0.206, indicating a slight positive relationship. The link between age and total amount spent is even less pronounced, with a correlation of 0.116, suggesting that age is not a strong predictor of spending within this dataset. In stark contrast, income shows a robust correlation of 0.836 with the total amount spent, highlighting that higher income levels are closely associated with increased customer spending. The strength of this relationship underscores income as a significant predictor of spending behavior among customers.
+
+**Relationship between Total Amount Spent and Income**
+
+```{r, warning = FALSE}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(aes(color = "Linear"), method = "lm", formula = y ~ x, se = FALSE) +
+  geom_smooth(aes(color = "Degree 2 Loess with Span 1"), method = "loess", 
+              formula = y ~ x, span = 1, se = FALSE) +
+  geom_smooth(aes(color="Gam"), method = "gam", se = FALSE) +
+  scale_color_manual(values = cb_palette) +
+  xlim(0, max(customer.data$Income)) +
+  ylim(0, max(customer.data$Total_Amount_Spent)) +
+  labs(title = "Figure 7: Total Amount Spent VS. Income",
+       subtitle = "Depicted by Different Models\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n",
+       color = "Method")
+
+```
+
+The depicted plot illustrates the relationship between Total Amount Spent and Income, analyzed using three different models. The linear model is represented by the dark blue line, a loess curve of degree 2 with a span of 1 is depicted in light blue, and the orange curve represents a gam curve.
+
+Upon careful examination of the data point distribution, it becomes apparent that the linear model are unsuitable choices, as they fail to capture the evident non-linear trend in the data.
+
+The scatter plot, featuring data points along with various fit lines, reveals that the light blue curve (loess with a span of 1 and degree 2) strikes a good balance. It adeptly captures the overall trend while accommodating local variations. In contrast, the orange curve (gam) is more susceptible to overfitting noise.
+
+Therefore, we observe that the **degree 2 loess model (i.e. Curved Function) with a span of 1** is good enough to define the relationship between Total Amount Spent and Income.
+
+```{r}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "loess", formula = y ~ x, span = 1, se = FALSE) +
+  xlim(0, max(customer.data$Income)) +
+  ylim(0, max(customer.data$Total_Amount_Spent)) +
+  labs(title = "Figure 8: Total Amount Spent VS. Income",
+       subtitle = "Depicted by Degree 2 Loess with Span 1\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n")
+
+```
+
+The scatter plot and accompanying Degree 2 Loess curve with a span of 1 provide a nuanced visualization of the relationship between income and total amount spent by customers. The curve indicates a progressive, non-linear increase in spending as income grows. The gentle slope at lower income levels suggests a more conservative spending pattern, which accelerates noticeably as income rises, especially beyond the $50,000 mark. This inflection point may reflect a threshold where disposable income sufficiently increases, thus allowing for greater discretionary spending. Notably, the scatter plot shows a denser cluster of data points at the lower end of the income spectrum, spreading out as income rises, which is indicative of increased variability in spending behaviors among higher earners. The Loess curve adeptly captures overall trend, highlighting the stronger influence of income on spending, especially in the mid to upper income ranges.
+
+**Total Amount Spent VS. Income, Faceted By Age Group**
+
+```{r}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent, color = age_group)) +
+  geom_point(size = 0.7) + 
+  geom_smooth(method = "loess", formula = y ~ x, span = 1, se = FALSE) +
+  scale_color_manual(values = cb_palette) +
+  facet_wrap(age_group~.) +
+  labs(title = "Figure 9: Total Amount Spent VS. Income",
+       subtitle = "Faceted By Age Group, Depicted by Degree 2 Loess with Span 1\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n",
+       color = "Age Group")
+
+```
+
+The faceted Degree 2 Loess plot illustrates distinct spending habits across various age groups when compared with income. I segmented the age into five different groups ("35 and Below", "36-45", "46-55", "56-65", "66-75"). The plots use a degree 2 Loess curve with a span of 1 to show the trend within each age group.
+
+**Trend breakdown:**
+
+**35 and Below** (Light Blue): This group appears to have a moderate upward trend. The Loess curve suggests that as income increases, the total amount spent also increases, but not as steeply as in some other age groups.
+
+**36-45** (Orange): This group shows a much steeper increase in spending as income increases, indicated by the steep Loess curve. It suggests that individuals in this age group tend to spend more as they earn more, compared to the 35 and below age group.
+
+**46-55** (Dark Blue): The trend here is similar to the 35 and below group but with a bit more variance. The spending increases with income but not as aggressively as in the 36-45 age group.
+
+**56-65** (Green): This group has a curve similar to the 35 and below age group but with a lower starting point of spending for the same income levels. This could indicate a tendency towards saving or lower spending despite increases in income.
+
+**66-75** (Purple): The oldest group has the most distinctive pattern. While there is an upward trend in spending with increased income, it is not as steep as in the younger age groups, and the spending levels off at higher income levels, which might suggest a cap on spending regardless of additional income, possibly due to fixed retirement plans or lower propensity to spend. However, there are very few data points to generalize any spending trend.
+ 
+In summary, the spending patterns are almost consistent across all age groups. However, the 36-45 age group demonstrates a unique behavior with a steep increase in spending as income increases and the 66-75 group also shows a distinct pattern where spending levels off at higher incomes, possibly due to retirement budgeting or reduced spending habits.
+
+The analysis suggests that spending behaviors are not only influenced by income but also by the life stage associated with each age group. Understanding these distinctions is pivotal for businesses to tailor their products and services to meet the nuanced needs of each demographic segment.
+
+Considering this, fitting a degree 2 loess curve with a span of 1 could be further explored.
+
+**Checking Interactions:**
+
+```{r}
+
+customer.lo <- loess(Total_Amount_Spent ~ Income * Age, data = customer.data, degree = 2, 
+                     span = 1, normalize = FALSE)
+
+customer.grid <- expand.grid(Income = seq(0, 100000, 1), Age = seq(15, 75, 5))
+
+customer.predict <- predict(customer.lo, newdata = customer.grid)
+
+customer.plot.df <- data.frame(customer.grid, Fit = as.vector(customer.predict))
+
+```
+
+```{r, warning = FALSE}
+
+ggplot(customer.plot.df, aes(x = Income, y = Fit, color = Age, group = Age)) + 
+  geom_line() + 
+  scale_color_viridis_b() +
+  labs(title = "Figure 10: Fitted Total Amount Spent VS. Income (USD)",
+       subtitle = "Interactions Check - Depicted by Degree 2 Loess With Span 1\n", 
+       x = "\nIncome (USD)", 
+       y = "Fitted Total Amount Spent (USD)\n")  
+
+```
+
+**Do we need an interaction between Income and Age?**
+
+The plot illustrates the relationship between income and spending across different age groups, captured by a color gradient that represents age from young (purple) to old (yellow).The Loess curves, following a degree 2 model with a span of 1, indicate a pattern in spending behavior relative to income. 
+
+Initially, there's a considerable spread between the age groups at lower income levels. However, as income increases, the spread between the age groups' spending appears to tighten, suggesting that the differences in spending by age become less pronounced at higher income levels. In the mid-income range, the spread between the curves widens slightly, before narrowing again at the highest incomes shown.
+
+The observed variation in this difference suggests the presence of interactions, indicating that the relationship between income and spending is indeed affected by age.
+
+Let's now fit a model to examine the interaction between Spending vs Income and Age.
+
+```{r}
+
+customer.lo <- loess(Total_Amount_Spent ~ Income * Age, data = customer.data, degree = 2, 
+                     span = 1, normalize = FALSE)
+
+
+customer.lo.df <- data.frame(customer.data,
+                             .fitted = fitted.values(customer.lo),
+                             .resid = residuals(customer.lo))
+
+summary(customer.lo)
+
+```
+
+**Residual Plots : Lack-of-trend check:** 
+
+**Residuals Against Age, Faceted By Income (Least Square Loess Model) -**
+
+```{r}
+
+ggplot(customer.lo.df, aes(x = Age, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_jitter(height = 0.3, width = 0.8, size = 0.7) +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  facet_wrap(~income_group) +
+  labs(title = "Figure 11: Residuals Against Age, Faceted By Income",
+       subtitle = "Least Square Loess Model\n",
+       x = "\nAge (Years)",
+       y = ".resid\n")
+
+```
+
+This scatter plot depicts the relationship between residuals and age, faceted by income. The presented data illustrates that the residuals are distributed randomly about the x-axis for income ranging from 40000 to 100000 USD. This pattern suggests that the loess model (degree 2 and span 1) may be a most suitable fit for elucidating the relationship between spending from income and age. However, it is noticeable that the residuals are not scattered randomly about the x axis for the initial income group (upto 40000 USD). This discrepancy could be attributed to the limited number of data points within this income range.
+
+**Residuals Against Income, Faceted By Age (Least Square Loess Model) -**
+
+```{r}
+
+ggplot(customer.lo.df, aes(x = Income, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "lm", formula = y ~ x) +
+  facet_wrap(~age_group) +
+  labs(title = "Figure 12: Residuals Against Income, Faceted By Age",
+       subtitle = "Least Square Loess Model\n",
+       x = "\nIncome (USD)",
+       y = ".resid\n")  
+
+```
+
+This scatter plot represents the relationship between residuals and income, faceted by the age. The plotted data illustrates that, for the age group from "35 and Below" to "66-75", the residuals are randomly distributed around the x-axis. This pattern suggests that the loess model (degree 2 and span 1) could be the most suitable fit for understanding the relationship between spending from income and age.
+
+**Robust Loess Model -**
+
+```{r}
+
+customer.ro.lo <- loess(Total_Amount_Spent ~ Income * Age, data = customer.data, 
+                        degree = 2, span = 1, normalize = FALSE, family = "symmetric")
+
+
+customer.ro.lo.df <- data.frame(customer.data,
+                                .fitted = fitted.values(customer.ro.lo),
+                                .resid = residuals(customer.ro.lo))
+
+```
+
+**Residuals Against Age, Faceted By Income (Robust Loess Model) -**
+
+```{r}
+
+ggplot(customer.ro.lo.df, aes(x = Age, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_jitter(height = 0.3, width = 0.8, size = 0.7) +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  facet_wrap(~income_group) +
+  labs(title = "Figure 13: Residuals Against Age, Faceted By Income",
+       subtitle = "Robust Loess Model\n",
+       x = "\nAge (Years)",
+       y = ".resid\n")
+
+```
+
+The plot depicting robust fit residuals against the age, faceted by income, closely resembles the plot of least square residuals for the same parameters.
+
+**Residuals Against Income, Faceted By Age (Robust Loess Model) -**
+
+```{r}
+
+ggplot(customer.ro.lo.df, aes(x = Income, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "lm", formula = y ~ x) +
+  facet_wrap(~age_group) +
+  labs(title = "Figure 14: Residuals Against Income, Faceted By Age",
+       subtitle = "Robust Loess Model\n",
+       x = "\nIncome (USD)",
+       y = ".resid\n")
+
+```
+
+The plot illustrating robust fit residuals against income, faceted by age, appears almost identical to the plot of least square residuals for the same parameters.
+
+**Should we fit using least squares or a robust fit?**
+
+Taking into account the presence of outliers, I attempted to fit the robust loess curve (Figures 13 and 14). However, upon comparison with the least square loess fit (Figures 11 and 12), both plots appear nearly identical.
+
+**What span should we use in your loess smoother?**
+
+After experimenting with different spans for our degree 2 loess model with an interaction, I settled on a span of 1. This choice provided a better fit for a model with an interaction, and the residual plots also indicated that the residuals are distributed randomly about the x-axis. This pattern suggests that the loess model (degree 2 and span 1) with an interaction could be the most suitable fit for elucidating the relationship between spending from income and age.
+
+**Goodness-of-fit:** R-Squared
+
+```{r}
+
+# Proportion of Variance Explained
+var(customer.lo.df$.fitted) / (var(customer.lo.df$.fitted) + var(customer.lo.df$.resid))
+
+# Proportion of Variance Unexplained
+var(customer.lo.df$.resid) / (var(customer.lo.df$.fitted) + var(customer.lo.df$.resid))
+
+```
+
+An R-squared value of 0.7394 for the model suggests that approximately 73.94% of the variation in the total amount spent can be explained by income across the different age groups. This high R-squared value indicates that the model has a relatively strong fit to the data, implying that income is a significant predictor of spending. While this model appears to capture a substantial portion of the spending behavior, there is still around 26.06% of the variation that is not explained by income alone. This unexplained variance may be due to other factors not included in the model, such as individual or cultural differences in spending habits, savings rates, or other economic factors. It might be insightful to consider additional variables that could affect spending to improve the model’s explanatory power further.
+
+**Therefore, I concluded to finalize the least square degree 2 Loess Model with a Span of 1. This choice represents the most suitable approximate fit for the dataset, effectively explaining the relationship between spending from income and age.**
+
+
+**Research Question 2**
+
+How does marital status influence spending relative to income?
+
+Is the spending-income relationship for different marital statuses best explained by a straightforward linear model, or does it require a more complex model to capture nuances?
+
+Are there identifiable patterns in spending behaviors among different marital statuses? If variations exist among different marital statuses, what are these differences, and how do they appear in spending behaviors?
+
+**Spending vs. Income Categorized by Marital Status**
+
+Let's employ the ggpairs function to examine plots and correlations for each variable. Here, Relationship Status corresponds to Marital Status.
+
+```{r}
+
+ggpairs(customer.data[,c("RelationshipStatus","Income","Total_Amount_Spent")])
+
+```
+
+The pair plot provides a comprehensive overview of the interactions between Relationship Status, Income, and Total Amount Spent, revealing key insights:
+
+**Relationship Status:** The bar plot for Relationship Status illustrates a non-uniform distribution, where certain categories notably outstrip others in frequency, suggesting certain relationship statuses are more prevalent in our customer base.
+
+**Income Distribution:** The box plots segmented by Relationship Status display a uniform distribution across different statuses, with considerable spread indicated by extended whiskers. However, outliers are not a prominent feature here, indicating a relative consistency in income ranges within each status category.
+
+**Spending Patterns:** The box plots for 'Total_Amount_Spent' exhibit a spread of spending habits with several higher-end outliers, particularly in certain relationship statuses. This suggests that while most customers spend within a typical range, a few spend significantly more.
+
+**Income-Spending Relationship:** The scatter plot showcases a pronounced positive correlation (0.836) between 'Income' and 'Total_Amount_Spent'. The density plots on the scatter plot's axes reveal the distribution of both variables, with the correlation suggesting that individuals with higher incomes tend to spend more, a trend that is consistent across the customer base.
+
+Together, these visualizations facilitate a multifaceted understanding of our customers, highlighting how demographic and economic factors interplay to shape spending behaviors.
+
+**Relationship between Total Amount Spent and Income**
+
+```{r, warning = FALSE}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(aes(color = "Linear"), method = "lm", formula = y ~ x, se = FALSE) +
+  geom_smooth(aes(color = "Degree 2 Loess with Span 1"), method = "loess", 
+              formula = y ~ x, span = 1, se = FALSE) +
+  geom_smooth(aes(color="Gam"), method = "gam", se = FALSE) +
+  scale_color_manual(values = cb_palette) +
+  xlim(0, max(customer.data$Income)) +
+  ylim(0, max(customer.data$Total_Amount_Spent)) +
+  labs(title = "Figure 15: Total Amount Spent VS. Income",
+       subtitle = "Depicted by Different Models\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n",
+       color = "Method")
+
+```
+
+The depicted plot illustrates the relationship between Total Amount Spent and Income, analyzed using three different models. The linear model is represented by the dark blue line, a loess curve of degree 2 with a span of 1 is depicted in light blue, and the orange curve represents a gam curve.
+
+Upon careful examination of the data point distribution, it becomes apparent that the linear model are unsuitable choices, as they fail to capture the evident non-linear trend in the data.
+
+The scatter plot, featuring data points along with various fit lines, reveals that the light blue curve (loess with a span of 1 and degree 2) strikes a good balance. However, the orange curve (gam) adeptly captures the overall trend while accommodating local variations when dealing with categorical variable like marital status. 
+
+Therefore, we observe that the **GAM model (i.e. Curved Function)** is good enough to define the relationship between Total Amount Spent and Income relative to Marital Status.
+
+```{r}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "gam", se = FALSE) +
+  xlim(0, max(customer.data$Income)) +
+  ylim(0, max(customer.data$Total_Amount_Spent)) +
+  labs(title = "Figure 16: Total Amount Spent VS. Income",
+       subtitle = "Depicted by Generalized Additive Model (GAM)\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n")
+
+```
+
+Figure 16 illustrates the relationship between income and total amount spent using a Generalized Additive Model (GAM), which allows for the estimation of a non-linear association. The scatter plot presents individual data points representing customers, with the blue line showing the smoothed trend as estimated by the GAM. Interpreting the GAM curve, we see a gradual increase in spending with income up to around $50,000, after which the spending accelerates more sharply, indicating that higher-income customers tend to spend significantly more. This trend flattens out somewhat as income approaches $100,000, suggesting a increase in income have a less pronounced impact on spending.
+
+**Total Amount Spent VS. Income, Faceted By Marital Status**
+
+```{r}
+
+ggplot(customer.data, aes(x = Income, y = Total_Amount_Spent, color = RelationshipStatus)) +
+  geom_point(size = 0.7) +
+  geom_smooth(method = "gam", se = FALSE) +
+  scale_color_manual(values = cb_palette) +
+  facet_wrap(~RelationshipStatus) +
+  labs(title = "Figure 17: Total Amount Spent VS. Income",
+       subtitle = "Faceted By Marital Status, Depicted by Generalized Additive Model (GAM)\n",
+       x = "\nIncome (USD)",
+       y = "Total Amount Spent (USD)\n",
+       color = "Marital Status")
+
+```
+
+Figure 17, segmented by marital status and modeled using Generalized Additive Models (GAM), exhibits similar spending trends in relation to income among different marital categories except for the window category maybe due to less number of data points. However, the rate at which spending increases with income is different for each category.
+
+There is a positive relationship between Income and Spending across all marital statuses.
+
+**Trend Breakdown by Marital Status:**
+
+**Widows** and **singles** seem to have a steeper slope, indicating a higher increase in spending with income compared to couples and divorced individuals.
+
+The trend for **couples** shows a consistent gradual increase in spending with income. However, the spending curve flattens as income approaches the higher end, suggesting a potential saturation point beyond which additional income does not translate into proportionally higher spending.
+
+For those **divorced**, the trend is similar to couples. However, it is less steeper, with spending increasing less rapidly with income when compared with couples. This group's behavior suggests a lifestyle changes post-divorce.
+
+These variations among marital statuses reflect how spending behavior could be influenced by the economic and social factors pertinent to each group. These insights are invaluable for businesses seeking to customize their marketing and sales strategies to align with the fiscal behaviors of their diverse customer base.
+
+Considering this, fitting a gam curve could be further explored.
+
+**Checking Interactions:**
+
+```{r}
+
+customer.gam <- gam(Total_Amount_Spent ~ s(Income) + s(RelStatus, k=4), 
+                    data = customer.data, method = "REML")
+
+gam.grid <- expand.grid(Income = seq(10000, 100000, 1), RelStatus = seq(1, 4, 1))
+
+customer.gam.predict <- predict(customer.gam, newdata = gam.grid)
+
+customer.plot.df <- data.frame(gam.grid, Fit = as.vector(customer.gam.predict))
+
+```
+
+```{r}
+
+ggplot(customer.plot.df, aes(x = Income, y = Fit, color = RelStatus, group = RelStatus)) +
+  geom_line() + 
+  scale_color_viridis_c() +
+  labs(title = "Figure 18: Fitted Total Amount Spent VS. Income (USD)",
+       subtitle = "Interactions Check - Depicted by Generalized Additive Model (GAM)\n
+       Here, Marital Status as 1 - Widow, 2 - Divorced, 3 - Single, 4 - Couple", 
+       x = "\nIncome (USD)", 
+       y = "Fitted Total Amount Spent (USD)\n",
+       color = "Marital Status")
+
+```
+
+**Do we need an interaction between Income and Marital Status?**
+
+We note that the curves for different marital statuses closely track each other and virtually overlap, suggesting minimal differentiation in spending behavior related to marital status at varying income levels. The lack of divergence between the lines indicates that the influence of income on spending is consistent regardless of marital status.
+
+Therefore, the analysis does not support the necessity for an interaction term between income and marital status in the model. The spending trends appear uniform across different marital statuses, implying that marital status does not significantly modify the relationship between income and total spending. 
+
+Let’s now fit a model to examine the relationship between income and total spending.
+
+```{r}
+
+customer.gam <- gam(Total_Amount_Spent ~ s(Income), data = customer.data, method = "REML")
+
+customer.gam.df <- data.frame(customer.data,
+                              .fitted = fitted.values(customer.gam),
+                              .resid = residuals(customer.gam))
+
+summary(customer.gam)
+
+```
+
+**Residual Plots : Lack-of-trend check:** 
+
+**Residuals Against Income (Generalized Additive Model (GAM)) -**
+
+```{r}
+
+ggplot(customer.gam.df, aes(x = Income, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "lm", formula = y ~ x) +
+  labs(title = "Figure 19: Residuals Against Income",
+       subtitle = "Generalized Additive Model (GAM)\n",
+       x = "\nIncome (USD)",
+       y = ".resid\n")  
+
+```
+
+This scatter plot depicts the relationship between residuals and income. The presented data illustrates that the residuals are distributed randomly about the x-axis for income ranging from 40000 to 100000 USD. This pattern suggests that the gam model may be a most suitable fit for elucidating the relationship between spending from income. However, it is noticeable that the residuals are not scattered randomly about the x axis for the initial income group (upto 40000 USD). This discrepancy could be attributed to the limited number of data points within this income range.
+
+**Residuals Against Income, Faceted By Marital Status (Generalized Additive Model (GAM)) -**
+
+```{r}
+
+ggplot(customer.gam.df, aes(x = Income, y = .resid)) +
+  geom_point(size = 0.9) + 
+  geom_smooth(method = "lm", formula = y ~ x) +
+  facet_wrap(~RelationshipStatus) +
+  labs(title = "Figure 20: Residuals Against Income, Faceted By Marital Status",
+       subtitle = "Generalized Additive Model (GAM)\n",
+       x = "\nIncome (USD)",
+       y = ".resid\n")
+ 
+```
+
+This scatter plot represents the relationship between residuals and income, faceted by the marital status. The plotted data illustrates that, for the marital status widow, divorced, single and couple, the residuals are randomly distributed around the x-axis. This pattern suggests that the gam model could be the most suitable fit for understanding the relationship between spending and income categorized by marital status.
+
+**Goodness-of-fit:** R-Squared
+
+```{r}
+
+# Proportion of Variance Explained
+var(customer.gam.df$.fitted) / (var(customer.gam.df$.fitted) + var(customer.gam.df$.resid))
+
+# Proportion of Variance Unexplained
+var(customer.gam.df$.resid) / (var(customer.gam.df$.fitted) + var(customer.gam.df$.resid))
+
+```
+
+An R-squared value of 0.7504 for the model suggests that approximately 75.04% of the variation in the total amount spent can be explained by income. This high R-squared value indicates that the model has a relatively strong fit to the data, implying that income is a significant predictor of spending. While this model appears to capture a substantial portion of the spending behavior, there is still around 24.96% of the variation that is not explained by income alone. This unexplained variance may be due to other factors not included in the model, such as individual or cultural differences in spending habits, savings rates, or other economic factors. It might be insightful to consider additional variables that could affect spending to improve the model’s explanatory power further.
+
+**Therefore, I concluded to finalize the Gam Model. This choice represents the most suitable approximate fit for the dataset, effectively explaining the relationship between spending and income.**
+
+
+**Research Question 3**
+
+What distinct segments of customers can be identified based on their purchasing behaviors, demographics, and interactions with marketing campaigns? 
+
+What unique characteristics define each identified customer segment?
+
+To prepare the dataset for **Principal Component Analysis (PCA)** and focus on the most impactful variables, we will exclude non-quantitative and less relevant features as listed below:
+
+```{r}
+
+drop <- c("ID", "Year_Birth", "Education", "Marital_Status", "Teenhome","Kidhome",
+          "Dt_Customer", "AcceptedCmp1","AcceptedCmp2", "AcceptedCmp3", "AcceptedCmp4",
+          "AcceptedCmp5", "Z_CostContact", "Z_Revenue", "RelationshipStatus", 
+          "age_group" , "income_group", "Complain" , "Response")
+
+customer.data.pca <- customer.data[,!(names(customer.data) %in% drop)]
+
+```
+
+This code excerpt filters out the specified columns, streamlining the data in preparation for conducting PCA to identify underlying patterns and reduce dimensionality.
+
+To unveil key patterns from our customer data, we execute Principal Component Analysis, followed by a summary to highlight the principal components' significance.
+
+```{r}
+
+customer.pca <- PCA(customer.data.pca, graph = FALSE)
+summary(customer.pca)
+
+```
+
+
+```{r}
+
+# Retrieve the percentage of variance explained by the first 7 principal components.
+
+customer.pca$eig[,2][1:7]
+
+# Retrieve the cumulative percentage of variance explained by the first 7 principal components.
+
+customer.pca$eig[,3][1:7]
+
+```
+Understanding the variance explained by each principal component helps in deciding how many components to retain for further analysis, ensuring that you capture most of the information in the data while reducing its complexity.
+
+Extracting and describing the dimensions (principal components) that contribute most to the variance in the first two axes of the PCA.
+
+```{r}
+
+dimdesc(customer.pca, axes = 1:2)
+
+```
+
+Extracting the contributions of each variable to each principal component from the PCA results.
+Knowing variable contributions can help taking decisions regarding variable importance and can be used to interpret the components in terms of the original features.
+
+```{r}
+
+customer.pca$var$contrib
+
+```
+
+To illustrate the impact of each variable on the principal components, we use a factor map that employs a color gradient to clearly demonstrate the magnitude of contributions, enhancing our understanding of the data's underlying structure.
+
+```{r}
+
+# Creating a factor map for the variable contributions
+
+fviz_pca_var(customer.pca, col.var = "contrib", gradient.cols = c("#002bbb", "#bb2e00"), 
+             repel = TRUE) + 
+  labs(title = "Figure 21: Variable Contributions in PCA Analysis\n", 
+       color = "Contribution")
+
+```
+
+Figure 21: Variable Contributions in PCA Analysis presents a biplot, where each vector represents a variable, and its direction and length indicate how it contributes to the two principal components. Larger angles between vectors signify less correlation, while smaller angles indicate a stronger relationship. Here, 'Total_Amount_Spent' and 'Income' point in a similar direction, implying their strong relationship. In contrast, 'Recency' and 'Deals' diverge, suggesting less correlation with the principal components and other variables.
+
+
+```{r}
+
+# Creating a factor map for the top 5 variables with the highest contributions.
+
+fviz_pca_var(customer.pca, select.var = list(contrib = 5), repel = TRUE) +
+    labs(title = "Figure 22: Variable Contributions in PCA Analysis",
+         subtitle = "Top 5 Variables with Highest Contributions\n")
+
+```
+
+Figure 22: Top 5 Variables with Highest Contributions focuses on the major contributors to the first principal component. 'Total_Amount_Spent' and 'Income' dominate, followed by 'Catalog', 'Purchases', and 'Meat'. This indicates that these variables are the most influential in explaining the variability within the customer data along the first dimension.
+
+```{r}
+
+fviz_contrib(customer.pca, choice = "var", axes = 1, top = 5) +
+  labs(title = "Figure 23: Contribution of Variables to a Dimension-1",
+       subtitle = "Top 5 Variables with Highest Contributions\n")  
+
+```
+
+Figure 23 showcases a bar chart that quantifies the contributions of different variables to the first principal component of the PCA analysis. In this dimension, which captures the most significant variance in the dataset, the variable 'Total Amount Spent' shows the highest contribution, indicating that it is a critical factor in differentiating customer behavior. The 'Income' variable follows closely, reinforcing the notion that financial capacity significantly influences spending patterns. 'Catalog', 'Purchases', and 'Meat' also show substantial contributions to this dimension, suggesting that the types of products purchased and the purchasing channels used are distinguishing features of the customer base. The strong influence of these variables in Dimension 1 suggests they are primary indicators of customer expenditure behavior.
+
+```{r}
+
+fviz_contrib(customer.pca, choice = "var", axes = 2, top = 5) +
+  labs(title = "Figure 24: Contribution of Variables to a Dimension-2",
+       subtitle = "Top 5 Variables with Highest Contributions\n")
+
+```
+
+Figure 24 provides a bar chart reflecting the variable contributions to the second principal component. This dimension captures the second-most variance within the dataset, focusing on aspects orthogonal to the first dimension. Here, 'Deals' is the leading contributor, suggesting a distinct segment of the customer base that is sensitive to promotions and discounts. 'WebVisits' follows, indicating that online engagement is another key differentiator among customers. The prominence of these variables in Dimension 2 highlights behavioral aspects like responsiveness to marketing tactics and digital interaction patterns, which are separate from the more straightforward financial capacity and spending amounts depicted in Dimension 1.
+
+**Integrating Principal Components for Enhanced Customer Insight: The Significance of Both Spending Patterns and Engagement Behaviors Captured by PC1 and PC2 in Customer Segmentation**
+
+In PCA, each principal component captures different aspects of variance in the dataset. PC1 typically captures the most significant variance, and PC2 captures the second most, but importantly, it captures variance that is orthogonal to PC1, meaning it captures a different type of variation within the data.
+
+From the plots and summaries, we can infer the following about PC1 and PC2:
+
+**PC1 (Dim1)**
+
+PC1 is largely associated with variables that represent overall spending and purchasing behavior like "Total_Amount_Spent", "Income", "Catalog", "Purchases" and "Meat". This suggests that PC1 may represent a "spending power" or "purchasing volume" dimension, differentiating customers based on how much they spend and how often they make purchases.
+
+**PC2 (Dim2)**
+
+PC2, on the other hand, shows a strong relationship with variables such as "Deal", "WebVisits", "Web", "Tenure" and "Purchases". This suggests that PC2 may capture behaviors related to customers' engagement with marketing campaigns, their tenure or loyalty, and their interaction with different sales channels (like the web, store, catalog and deals). The negative correlations with "Sweets", "Meat" and "Fruits" could suggest that PC2 also contrasts purchasing patterns in terms of product categories.
+
+The combination of PC1 and PC2 provides a more comprehensive view of customer behavior. PC1 might segment customers based on how much they spend overall, while PC2 could differentiate them based on how they respond to marketing, customer engagement (like web visits and deal usage), how they shop (online vs. offline), and what they buy. This multifaceted insight is crucial for businesses to tailor their marketing strategies, product offerings, and customer engagement approaches effectively.For example, focusing on upselling strategies for high-spenders or improving online user experience to convert web visits to purchases.
+
+To quantify the interrelationships among the selected variables post-refinement, we compute a correlation matrix, providing a foundational understanding of the associations to be explored in our PCA.
+
+```{r}
+
+correlation_matrix <- cor(customer.data.pca)
+
+```
+
+To pinpoint and potentially exclude features that may introduce bias due to high collinearity, we'll identify pairs with a correlation above the 0.75 threshold.
+
+```{r}
+
+highly_correlated_features <- findCorrelation(correlation_matrix, cutoff = 0.75)
+
+```
+
+Removing highly correlated features reduces redundancy in the dataset, which can distort the results of PCA and clustering due to the multicollinearity and over representation of similar information.
+ 
+```{r}
+
+correlated.data <- customer.data.pca[,-highly_correlated_features]
+
+```
+
+This approach streamlines the feature set, ensuring the PCA focuses on independent dimensions of variance within our customer data.
+
+Normalization is critical in clustering and PCA because it ensures that all variables contribute equally to the analysis, preventing variables with larger scales from dominating.
+
+```{r}
+
+# Normalizing Data
+scaled.correlated.data <- scale(correlated.data)
+
+```
+
+To determine the optimal number of clusters for segmenting our customer base, we apply the Elbow Method, analyzing the within-cluster sum of squares (WSS) for different cluster counts.
+
+```{r, warning = FALSE}
+
+WSS <- c()
+
+for (i in 1:10) {
+  kmeans.model <- kmeans(scaled.correlated.data, centers = i, nstart = 10)
+  WSS[i] <- kmeans.model$tot.withinss
+}
+
+plot(1:10, WSS, type = "b", 
+     xlab = "Number of Clusters (k)", 
+     ylab = "Within - Cluster Sum of Squares (WSS)",
+     main = "Figure 25: Elbow Method To Find Optimal Number of Clusters, k")
+
+```
+
+This analysis will visually indicate the point at which the marginal gain in explained variance decreases, signifying the most appropriate number of clusters for k-means segmentation.
+
+```{r}
+
+# Visualizing the Elbow Point
+fviz_nbclust(scaled.correlated.data, kmeans, method = "wss") + 
+  geom_vline(xintercept = 3, linetype = "dashed") +
+  ggtitle("Figure 26: Visualizing the Elbow Point\n")
+
+```
+
+The purpose of visualizing the elbow point is to provide a clear graphical representation that supports the decision on how many clusters to use. The WSS plot and the vertical line at the selected number of clusters (in this case, 3) serve to visually confirm the analysis done in previous steps where the elbow method was used to analyze the WSS values.
+
+Employing a set seed for reproducibility, we conduct k-means clustering on the dataset with a predetermined optimal cluster count to categorize customers into distinct segments.
+
+```{r}
+
+set.seed(1)
+
+# Perform k-means clustering on the dataset
+kmeans.model <- kmeans(scaled.correlated.data, centers = 3, nstart = 10)
+cluster.assignments <- kmeans.model$cluster
+
+```
+
+K-means clustering partitions the customers into groups (clusters) that minimize the variance within each group, which can reveal distinct types of customer behavior or demographics based on the dataset features.
+
+Leveraging the k-means clustering results, we visualize the identified customer segments in a two-dimensional space, accentuating the separation and coherence within clusters.
+
+```{r}
+
+fviz_cluster(kmeans.model, scaled.correlated.data, geom = "point", ellipse.type = "norm", 
+             repel = TRUE) +
+  scale_color_manual(values =  c("#E69F00", "#CC79A7", "#56B4E9")) +
+  labs(title = "Figure 27: Visualizing Clusters\n", 
+       x = "\nDim1 (35.8%)", 
+       y = "Dim1 (11.2%)\n")
+
+```
+
+**Secondary PCA and Clustering**
+
+After initial clustering, we have identified new insights about the variables, i.e. highly correlated that may introduce bias due to multicollinearity perhaps contributing to noise. Performing a secondary PCA and reclustering allows us to apply these insights, potentially leading to more meaningful or distinct clusters.
+
+Reapplying PCA and clustering may serve as a method to validate the initial findings. If similar clusters emerge from the secondary analysis, it reinforces the robustness and reliability of our segmentation strategy.
+
+```{r}
+
+# Perform Principal Component Analysis on the scaled and normalized data.
+customer.secondary.pca <- prcomp(scaled.correlated.data, scale = TRUE)
+
+# Calculate the proportion of variance explained by each principal component 
+# and express it as a percentage.
+
+variance_proportion <- round(customer.secondary.pca$sdev^2/sum(customer.secondary.pca$sdev^2)*100, 1)
+
+```
+
+To evaluate the effectiveness of each principal component in capturing the variance within our dataset, we construct a scree plot. 
+
+```{r}
+
+# Create a scree plot to visualize the variance explained by each principal component.
+
+ggplot(data.frame(PC = 1:length(variance_proportion), variance_proportion), 
+       aes(x = PC, y = variance_proportion)) +
+  geom_bar(stat = "identity", fill = "blue", alpha = 0.5) +
+  geom_text(aes(label = round(variance_proportion, 2)),   
+            vjust = -0.5,                              
+            color = "black",                            
+            size = 3)  +
+  labs(title = "Figure 28: Scree Plot",
+       subtitle = "Variance Explained By Each Principal Component\n",
+       x = "\nPrincipal Component", 
+       y = "Variance Explained (%)\n")  
+
+```
+
+**K-Means Clustering on PCA Results**
+
+To determine the optimal number of clusters for k-means clustering, we use the Elbow Method. This method calculates the sum of squared distances (SSD) from each point to its assigned center for varying numbers of clusters, allowing us to identify the point where adding more clusters does not significantly improve the fit.
+
+```{r}
+
+# Define a range of k values to test for clustering
+k.values <- 2:10
+
+# Compute the SSD for each k value using k-means clustering and store the results
+SSD <- sapply(k.values, function(k) {
+  kmeans(customer.secondary.pca$x, centers = k)$tot.withinss
+})
+
+# Plot the SSD against the number of clusters to visualize the Elbow Method
+plot(k.values, SSD, type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of Clusters (k)", 
+     ylab = "Sum of Squared Distances (SSD)",
+     main = "Figure 29: Elbow Method To Find Optimal Number of Clusters, k")
+
+```
+
+```{r}
+
+# Identifying the Elbow Point
+
+fviz_nbclust(customer.secondary.pca$x, kmeans, method = "wss", k.max = 10) + 
+  geom_vline(xintercept = 3, linetype = "dashed") + 
+  ggtitle("Figure 30: Identifying the Elbow Point\n")
+
+```
+
+It visually confirms the "elbow" point identified previously, guiding the decision on the number of clusters to use for final clustering.
+
+```{r}
+# Choose the number of principal components
+principal.components.number <- 10
+
+# Extract the selected principal components
+customer.secondary.pca.selected <- data.frame(customer.secondary.pca$x)
+
+# Add the selected principal components to the original data
+customer.pca.data <- cbind(scaled.correlated.data, customer.secondary.pca.selected)
+```
+
+**Combining PCA and K-means Clustering**
+
+To elucidate the segmentation of our customer base, we perform k-means clustering on PCA-transformed data, aiming to identify distinct groups based on their principal component scores. The resulting clusters are visualized using a scatter plot of the first two principal components, providing a clear depiction of how customers group together in the transformed feature space.
+
+```{r}
+
+# Set a seed for reproducibility of the k-means clustering results
+
+set.seed(1)
+
+# Perform k-means clustering on the PCA-transformed data with 3 centers 
+# and 25 random starts to ensure convergence
+
+kmeans.pca <- kmeans(customer.secondary.pca.selected, centers = 3, nstart = 25)
+
+# Combine the original PCA data with the cluster assignments to facilitate visual analysis
+
+pca.clustered.data <- cbind(customer.pca.data, Cluster = kmeans.pca$cluster)
+
+# Plot the PCA clustered data using ggplot2, with PC1 and PC2 on the axes 
+# and cluster assignment as the color
+
+ggplot(pca.clustered.data, aes(x = PC1, y = PC2, color = factor(Cluster))) +
+  geom_point() +
+  scale_color_manual(values =  c("#E69F00", "#CC79A7", "#56B4E9")) +
+  theme_bw() +
+  labs(title = "Figure 31: Customer Segmentation",
+       subtitle = "PCA with K-means Clustering\n",
+       x = paste0("\nPC1 (", variance_proportion[1], "%)"),
+       y = paste0("PC2 (", variance_proportion[2], "%)\n"),
+       color = "Cluster Label")
+
+```
+
+**Interpretation:**
+
+This scatter plot, derived from the application of K-means clustering on the principal component analysis (PCA) transformed data, reveals the segmentation of customers into three distinct clusters. Each dot represents a customer, positioned according to their scores on the first two principal components - PC1 and PC2, which explain 35.8% and 11.2% of the variance, respectively.
+
+**Cluster 1:** Shown in Orange, forms a relatively tight grouping, suggesting high similarity within this segment. These customers are positioned towards higher values on PC1 and span across PC2. This suggests that Cluster 1's behavior is strongly aligned with the dominant variance in purchasing behaviors captured by PC1. The spread along PC2 indicates variability in the secondary behaviors or characteristics captured by this component.
+
+**Cluster 2:** Shown in Purple, This group is centrally located around the lower to middle range of PC1 and spreads across the negative and positive values of PC2. This central positioning suggests that these customers exhibit average spending behaviors and have a mixed response to the behavioral aspects captured by PC2.
+
+**Cluster 3:** Shown in Blue, this cluster is distinguished by higher PC2 scores. These customers are predominantly found towards the lower end of PC1. The distribution along PC2 suggests diverse behaviors in aspects not captured by the primary spending variance, possibly indicating this group's varied interactions with marketing campaigns or engagement with different sales channels.
+
+The clusters exhibit some degree of overlap, especially between clusters 1 and 2, suggesting that there might be a transition zone where customer behaviors and spending are not sharply distinct. However, each cluster is sufficiently separated to suggest that they represent different customer behaviors and preferences. 
+
+To synthesize a targeted analysis, we extract a subset of critical variables from our dataset and append cluster classifications, enabling a comprehensive examination of customer groups within our segmentation model:
+
+```{r}
+
+# Select variables of interest that will be used for customer segmentation
+variables <- c("Income", "Tenure", "Age", "Wines", "Fruits", "Meat", "Fish", "Sweets",
+               "Gold", "WebVisits", "Web", "Deal", "Store", "Catalog")
+
+# Create a new data frame with only the selected variables from the correlated data
+cluster.data <- correlated.data[ ,variables]
+
+# Append the cluster assignments from the k-means model to the selected variables data
+pca.clustered.data <- cbind(cluster.data, Cluster = kmeans.pca$cluster)
+
+```
+
+**Visualizing Variable Distributions by Cluster**
+
+The boxplot visualization aids in discerning the distribution of key variables across the established customer clusters, revealing differences and similarities within the different segment.
+
+This visual assessment will serve as a pivotal reference for understanding how each cluster's attributes contribute to their distinct behavior.
+
+```{r, fig.height=10}
+
+# Transform the clustered data into long format for plotting
+# Plot boxplots for each variable within each cluster to compare distributions
+
+ggplot(melt(pca.clustered.data, id.vars = "Cluster"), 
+       aes(x = Cluster, y = value, group = Cluster, fill = factor(Cluster))) +
+  geom_boxplot() + 
+  scale_fill_manual(values =  c("#E69F00", "#CC79A7", "#56B4E9")) +
+  facet_wrap(~ variable, scales = "free_y") + 
+  theme_bw() +
+  labs(title = "Figure 32: Visualizing Variable Distributions by Cluster",
+       subtitle = "Depicted By Boxplots\n",
+       x = "\nCluster",
+       y = "Value\n",
+       fill = "Cluster Label")
+
+```
+
+**Analysis of Customer Segments Based on Behavior, Demographics, and Marketing Interactions**
+
+Our comprehensive analysis has identified three distinct customer segments, each with unique purchasing behaviors, demographic profiles, and interactions with marketing campaigns. The characteristics of each segment are as follows:
+
+**Cluster 1: Emerging Economicals**
+
+*Income:* This segment represents customers with the lowest income bracket, suggesting limited spending capacity.
+
+*Age:* They tend to be younger, with a median age of approximately 41, and are the most recent members of the company's customer base.
+
+*Digital Engagement:* They visit the company's website more often than other segments, yet their spending via web and overall is the lowest, indicating a more cautious or price-conscious shopping behavior.
+
+*Segmentation Label:* Due to their high digital engagement but low spending, customers in Cluster 1 can be identified as "Emerging Economicals" or "Conservative Shoppers".
+
+**Cluster 2: Established Balancers**
+
+*Income:* Customers in this cluster have average income levels, indicating a middle-ground spending potential.
+
+*Age:* They tend to have a median age of approximately 50. 
+
+*Tenure:* They have been associated with the company for the longest duration, indicating loyalty and consistent patronage.
+
+*Shopping Habits:* Their spending is moderate in each product category, suggesting a balanced approach to purchases.
+
+*Engagement:* They frequently visit the website, potentially for browsing or engaging with content, and utilize various shopping modes, including web, store, and deals.
+
+*Segmentation Label:* Reflecting their loyalty and balanced shopping habits, Cluster 2 can be termed "Established Balancers" or "Balanced Value Seekers".
+
+**Cluster 3: High-Income Enthusiasts**
+
+*Income:* This segment has the highest income levels among the three clusters.
+
+*Demographics:* With a median age of about 45, this group might consist of established professionals who prioritize quality over discounts.
+
+*Spending Behavior:* They exhibit the highest spending across all product categories, particularly on wines and meat, suggesting a preference for premium products.
+
+*Purchasing Channels:* Despite their high spending, they tend not to utilize deals, indicating a lower sensitivity to price or promotions.Despite their high income, their actual spending via web channels is lower compared to their potential, suggesting a behavior of browsing or researching online without necessarily leading to proportionate online purchases.
+
+*Segmentation Label:* Given their high spending irrespective of deals, customers in Cluster 3 can be classified as "High-Income Enthusiasts" or "Affluent Explorers".
+
+
+**Strategic Implications**
+
+By categorizing customers into these segments - High-Income Enthusiasts, Established Balancers, and Emerging Economicals - companies can fine-tune their marketing strategies and customer engagement approaches. For High-Income Enthusiasts, companies can focus on exclusive offers and premium product lines. For Established Balancers, personalized services, loyalty programs, and cross-channel engagement could drive retention. Lastly, for Emerging Economicals, enhancing the online user experience and offering value deals could convert website visits into purchases.
+
+Understanding these customer segments allows businesses to make data-informed decisions to enhance customer satisfaction, foster loyalty, and drive growth.
+
+
+**Conclusions**
+
+**Spending vs. Income by Age:** The research indicated that spending behavior does indeed vary across different age groups. The analysis illustrates a general increase in spending with rising household income across all age groups. Notably, younger customers (35 and below) exhibit more conservative spending regardless of income, suggesting that other factors may influence their purchasing decisions. The customers under 36-45 age groups exhibited a pronounced increase in spending as income rose, whereas the 66-75 age groups showed a leveling off in spending at higher incomes, potentially due to fixed retirement income or reduced spending habits. This suggests that life stage considerations are crucial in understanding consumer spending behavior, with income being a significant predictor of spending across age groups.
+
+**Spending vs. Income by Marital Status:** The analysis showed that spending relative to income was consistent across different marital statuses, suggesting that marital status does not significantly modify the relationship between income and spending. This conclusion is drawn from the observation that the lines representing different marital statuses in the gam model closely tracked each other, indicating uniform spending trends irrespective of marital status.
+
+**Customer Segmentation:** The PCA analysis revealed key variables that define customer segments. Variables such as Total Amount Spent, Income, Catalog, Purchases, and Meat were significant in explaining customer behavior variability. The results indicated that financial capacity i.e. income and the types of products purchased are primary indicators of customer expenditure behavior, which can guide businesses in tailoring their products and services more effectively to meet the needs of each customer segment. Additionally, clustering methods have effectively segmented the customer base into three distinct groups i.e. High-Income Enthusiasts, Established Balancers, and Emerging Economicals. These segments demonstrate unique purchasing patterns and demographic features which can be leveraged for more targeted marketing strategies.
+
+
+**Limitations**
+
+The analysis is limited to the variables available in the dataset. There might be external factors not included in the model, such as cultural differences, economic factors, or psychological factors that influence spending habits.
+
+The model explains a significant proportion of variance in spending, but a non-negligible amount of variance remains unexplained, which could be important in understanding the complete picture of consumer behavior.
+
+
+**Future Scope**   
+
+Future studies could incorporate additional variables that may influence spending, such as educational level, number of dependents, or more nuanced measures of engagement with marketing campaigns.
+
+Longitudinal data could be used to examine changes in spending behavior over time and the impact of life events on consumer spending.
+
+Exploring machine learning algorithms like random forests or neural networks could reveal non-linear patterns and interactions not detected by the current models.
+
+Further research could explore the psychological drivers of spending behavior to provide a more holistic view of consumer decision-making processes.
